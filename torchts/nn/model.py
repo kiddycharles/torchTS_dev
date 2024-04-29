@@ -1,48 +1,59 @@
 from abc import abstractmethod
-from functools import partial
-
+from typing import Optional, Callable, Dict
+from torch.optim import Adam
 import torch.nn.functional as F
-from pytorch_lightning import LightningModule, Trainer
+import lightning as L
+from lightning.pytorch import Trainer, seed_everything
 from torch.utils.data import DataLoader, TensorDataset
 
 
-class TimeSeriesModel(LightningModule):
+"""
+The lightningModule has many convenient methods, but the core ones are the following:
+1. __init__ and setup()
+2. forward()
+3. train_step()
+4. validation_step()
+5. test_step()
+6. predict_step()
+7. configure_optimizers()
+"""
+
+
+class TimeSeriesModel(L.LightningModule):
     """Base class for all TorchTS models.
 
     Args:
         optimizer (torch.optim.Optimizer): Optimizer
-        opimizer_args (dict): Arguments for the optimizer
+        optimizer_kwargs (dict): Arguments for the optimizer
         criterion: Loss function
-        criterion_args (dict): Arguments for the loss function
+        criterion_kwargs (dict): Arguments for the loss function
         scheduler (torch.optim.lr_scheduler): Learning rate scheduler
-        scheduler_args (dict): Arguments for the scheduler
+        scheduler_kwargs (dict): Arguments for the scheduler
         scaler (torchts.utils.scaler.Scaler): Scaler
     """
 
     def __init__(
         self,
-        optimizer,
-        optimizer_args=None,
+        optimizer=Adam,
+        optimizer_kwargs=None,  # includes learning rate
         criterion=F.mse_loss,
-        criterion_args=None,
+        criterion_kwargs=None,
         scheduler=None,
-        scheduler_args=None,
+        scheduler_kwargs=None,
         scaler=None,
     ):
-        super().__init__()
         self.criterion = criterion
-        self.criterion_args = criterion_args
+        self.criterion_args = criterion_kwargs
         self.scaler = scaler
 
-        if optimizer_args is not None:
-            self.optimizer = partial(optimizer, **optimizer_args)
-        else:
-            self.optimizer = optimizer
+        self.optimizer = optimizer
+        self.optimizer_kwargs = optimizer_kwargs
 
-        if scheduler is not None and scheduler_args is not None:
-            self.scheduler = partial(scheduler, **scheduler_args)
-        else:
-            self.scheduler = scheduler
+        self.scheduler = scheduler
+        self.scheduler_kwargs = scheduler_kwargs
+        # a good practice to call super().__init__() at the end of the __init__ method to ensure that
+        # any initialization logic in the parent class is executed correctly.
+        super().__init__()
 
     def fit(self, x, y, max_epochs=10, batch_size=128):
         """Fits model to the given data.
@@ -116,7 +127,7 @@ class TimeSeriesModel(LightningModule):
             batch (torch.Tensor): Output of the torch.utils.data.DataLoader
             batch_idx (int): Integer displaying index of this batch
         """
-        val_loss = self._step(batch, batch_idx, len(self.trainer.val_dataloader))
+        val_loss = self._step(batch, batch_idx, 0)
         self.log("val_loss", val_loss)
         return val_loss
 
@@ -127,12 +138,13 @@ class TimeSeriesModel(LightningModule):
             batch (torch.Tensor): Output of the torch.utils.data.DataLoader
             batch_idx (int): Integer displaying index of this batch
         """
-        test_loss = self._step(batch, batch_idx, len(self.trainer.test_dataloader))
+        test_loss = self._step(batch, batch_idx, 0)
         self.log("test_loss", test_loss)
         return test_loss
 
     @abstractmethod
-    def forward(self, x, y=None, batches_seen=None):
+    def forward(self, *args):
+    # def forward(self, x, y=None, batches_seen=None):
         """Forward pass.
 
         Args:
@@ -153,11 +165,21 @@ class TimeSeriesModel(LightningModule):
         """
         return self(x).detach()
 
+    def predict_step(self, x):
+        return self(x).detach()
+
     def configure_optimizers(self):
         """Configure optimizer.
 
         Returns:
             torch.optim.Optimizer: Optimizer
+
+        6 options
+        - single optimizer
+        - list or tuple of optimizers
+        - Two lists - the first list has multiple optimizers, the second has multiple LR scheduler
+        - dictionary
+        - None - run without optimizers
         """
         optimizer = self.optimizer(self.parameters())
 
@@ -166,3 +188,4 @@ class TimeSeriesModel(LightningModule):
             return [optimizer], [scheduler]
 
         return optimizer
+
