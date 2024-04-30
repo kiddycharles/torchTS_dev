@@ -1,13 +1,14 @@
 import lightning as L
 from torch.utils.data import DataLoader
-from torchts.utils.data.datasets import ETTDataset, YahooFinanceEquity
+from torchts.utils.data.datasets import ETTDataset, YahooFinanceDataset
 
 DATA_DICT = {
     "ETTh1": {"path": "data/ETT/ETTh1.csv", "target": "OT", "frequency": "h"},
     "ETTh2": {"path": "data/ETT/ETTh2.csv", "target": "OT", "frequency": "h"},
     "ETTm1": {"path": "data/ETT/ETTm1.csv", "target": "OT", "frequency": "t"},
     "ETTm2": {"path": "data/ETT/ETTm2.csv", "target": "OT", "frequency": "t"},
-    "BTC-USD": {"path": "data/Stocks/BTC-USD.csv", "target": "Close", "frequency": "d"}
+    "NVDA": {"path": "data/Stocks/NVDA.csv", "target": "close", "frequency": "h"},
+    "AMD": {"path": "data/Stocks/AMD.csv", "target": "close", "frequency": "h"},
 }
 
 
@@ -135,14 +136,14 @@ class YahooFinanceDataModule(L.LightningDataModule):
     def __init__(
             self,
             dataset_name,
-            seq_len=7 * 4 * 4,
-            label_len=7 * 4,
-            pred_len=7 * 4,
+            seq_len=24 * 4 * 4,
+            label_len=24 * 4,
+            pred_len=24 * 4,
             variate="m",
-            target="Close",
+            target="close",
             scale=True,
             time_encoding="timefeature",
-            frequency="d",
+            frequency="h",
             batch_size=32,
             num_workers=0,
             **kwargs
@@ -165,7 +166,7 @@ class YahooFinanceDataModule(L.LightningDataModule):
 
     def setup(self, stage: str = None):
         if stage == "fit" or stage is None:
-            self.train_dataset = YahooFinanceEquity(
+            self.train_dataset = YahooFinanceDataset(
                 self._data_path,
                 split="train",
                 seq_len=self.seq_len,
@@ -177,7 +178,7 @@ class YahooFinanceDataModule(L.LightningDataModule):
                 time_encoding=self.time_encoding,
                 frequency=self.frequency,
             )
-            self.val_dataset = YahooFinanceEquity(
+            self.val_dataset = YahooFinanceDataset(
                 self._data_path,
                 split="val",
                 seq_len=self.seq_len,
@@ -191,7 +192,7 @@ class YahooFinanceDataModule(L.LightningDataModule):
             )
             self.scaler = self.train_dataset.scaler
         if stage == "test" or stage is None:
-            self.test_dataset = YahooFinanceEquity(
+            self.test_dataset = YahooFinanceDataset(
                 self._data_path,
                 split="test",
                 seq_len=self.seq_len,

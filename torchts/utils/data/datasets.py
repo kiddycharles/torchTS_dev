@@ -126,19 +126,19 @@ class ETTDataset(Dataset):
         return self.columns
 
 
-class YahooFinanceEquity(Dataset):
+class YahooFinanceDataset(Dataset):
     def __init__(
             self,
             path,
             split="train",
-            seq_len=7 * 4 * 4,
-            label_len=7 * 4,
-            pred_len=7 * 4,
+            seq_len=30,
+            label_len=30,
+            pred_len=15,
             variate="m",
-            target="Close",
+            target="close",
             scale=True,
             time_encoding=False,
-            frequency="d",
+            frequency=None,
     ):
         assert split in ["train", "val", "test"]
         self._path = path
@@ -161,24 +161,13 @@ class YahooFinanceEquity(Dataset):
         if self.frequency == "h":
             begin_indices = {
                 "train": 0,
-                "val": 12 * 30 * 24 - self.seq_len,
-                "test": 12 * 30 * 24 + 4 * 30 * 24 - self.seq_len,
+                "val": 12 * 5 - self.seq_len,
+                "test": 12 * 5 + 4 * 5 - self.seq_len,
             }
             end_indices = {
-                "train": 12 * 30 * 24,
-                "val": 12 * 30 * 24 + 4 * 30 * 24,
-                "test": 12 * 30 * 24 + 8 * 30 * 24,
-            }
-        elif self.frequency == "d":
-            begin_indices = {
-                "train": 0,
-                "val": 12 * 30 * 4 - self.seq_len,
-                "test": 12 * 30 * 4 + 4 * 30 * 4 - self.seq_len,
-            }
-            end_indices = {
-                "train": 12 * 30 * 4,
-                "val": 12 * 30 * 4 + 4 * 30 * 4,
-                "test": 12 * 30 * 4 + 8 * 30 * 4,
+                "train": 12 * 5,
+                "val": 12 * 5 + 4 * 5,
+                "test": 12 * 5 * 8 * 5,
             }
         else:
             begin_indices = {
@@ -191,9 +180,10 @@ class YahooFinanceEquity(Dataset):
                 "val": int(len(df) * 0.7) + int(len(df) * 0.2),
                 "test": len(df),
             }
+
         begin_index = begin_indices[self.split]
         end_index = end_indices[self.split]
-
+        df_data = None
         if self.variate == "m" or self.variate == "mu":
             data_columns = df.columns[1:]
             df_data = df[data_columns]
@@ -215,9 +205,9 @@ class YahooFinanceEquity(Dataset):
         df_timestamp["date"] = pd.to_datetime(df_timestamp.date)
 
         timestamp_data = time_features(df_timestamp, time_encoding=self.time_encoding, frequency=self.frequency)
-
         self.time_series = torch.FloatTensor(data[begin_index:end_index])
         self.timestamp = torch.FloatTensor(timestamp_data)
+
 
     def __getitem__(self, index):
         x_begin_index = index

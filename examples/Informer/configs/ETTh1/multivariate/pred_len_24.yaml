@@ -1,6 +1,6 @@
 trainer:
   max_epochs: 6
-  accelerator: cpu
+  accelerator: mps
   devices: 1
 data:
   dataset_name: ETTh1
