@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import Dataset
 from torchts.utils.data.scalers import StandardScaler
 from torchts.utils.data.time_features import time_features
+from abc import ABC, abstractmethod
 
 
 class ETTDataset(Dataset):
@@ -72,7 +73,7 @@ class ETTDataset(Dataset):
             }
         begin_index = begin_indices[self.split]
         end_index = end_indices[self.split]
-
+        df_data = None
         if self.variate == "m" or self.variate == "mu":
             data_columns = df.columns[1:]
             df_data = df[data_columns]
@@ -208,7 +209,6 @@ class YahooFinanceDataset(Dataset):
         self.time_series = torch.FloatTensor(data[begin_index:end_index])
         self.timestamp = torch.FloatTensor(timestamp_data)
 
-
     def __getitem__(self, index):
         x_begin_index = index
         x_end_index = x_begin_index + self.seq_len
@@ -235,3 +235,39 @@ class YahooFinanceDataset(Dataset):
     @property
     def columns(self):
         return self.columns
+
+
+class BaseTimeSeriesDataset(Dataset, ABC):
+    def __init__(self, path, split="train", seq_len=30, label_len=30, pred_len=15,
+                 variate="m", target="close", scale=True, time_encoding=False, frequency=None):
+        self.df = None
+        assert split in ["train", "val", "test"], "Split must be either train or val or test"
+        self.path = path
+        self.split = split
+        self.seq_len = seq_len
+        self.label_len = label_len
+        self.pred_len = pred_len
+        self.variate = variate
+        self.target = target
+        self.scale = scale
+        self.time_encoding = time_encoding
+        self.frequency = frequency
+        self.scaler = StandardScaler()
+        self.data = None
+        self.timestamps = None
+        self.data_columns = None
+        self.load_data()
+        self.prepare_data()
+
+    def load_data(self):
+        self.df = pd.read_csv(self.path)
+        if self.variate in ['m', 'mu']:
+            self.data_columns = self.df.columns[1:]
+        elif self.variate == 'u':
+            self.data_columns = [self.target]
+        self.data = torch.FloatTensor(self.df[self.data_columns].values)
+
+
+    def prepare_data(self):
+        if self.scale:
+            train_data = self.data[self.get_indices("train")[0]: ]
