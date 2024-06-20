@@ -1,224 +1,131 @@
+import torch
 import torch.nn as nn
-from torchts.nn.layers.attention import FullAttention, ProbSparseAttention, AttentionLayer
-from torchts.nn.layers.embedding import DataEmbedding
-from torchts.nn.layers.TransformerEnc import Encoder, EncoderLayer, EncoderStack, SelfAttentionDistil
-from torchts.nn.layers.TransformerDec import Decoder, DecoderLayer
+
+from torchts.nn.layers.Embed import DataEmbedding, DataEmbedding_wo_pos, DataEmbedding_wo_temp, \
+    DataEmbedding_wo_pos_temp
+from torchts.nn.layers.SelfAttention_Family import ProbAttention, AttentionLayer
+from torchts.nn.layers.Transformer_EncDec import Decoder, DecoderLayer, Encoder, EncoderLayer, ConvLayer
+from torchmetrics import MeanAbsoluteError
+from torchts.nn.model import TimeSeriesModel
 
 
-class BaseInformer(nn.Module):
-    def __init__(
-        self,
-        enc_in=7,
-        dec_in=7,
-        c_out=7,
-        out_len=24,
-        factor=5,
-        d_model=512,
-        n_heads=8,
-        num_encoder_layers=2,
-        num_decoder_layers=1,
-        d_ff=2048,
-        dropout=0.05,
-        attention_type="prob",
-        embedding_type="fixed",
-        frequency="h",
-        activation="gelu",
-        output_attention=False,
-        distil=True,
-        mix_attention=False,
-        **kwargs
-    ):
-        super(BaseInformer, self).__init__()
-        self.pred_len = out_len
-        self.attention_type = attention_type
-        self.output_attention = output_attention
+class Model(nn.Module):
+    """
+    Informer with Propspare attention in O(LlogL) complexity
+    """
 
-        self.enc_embedding = DataEmbedding(enc_in, d_model, embedding_type, frequency, dropout)
-        self.dec_embedding = DataEmbedding(dec_in, d_model, embedding_type, frequency, dropout)
+    def __init__(self, configs):
+        super(Model, self).__init__()
+        self.pred_len = configs.pred_len
+        self.output_attention = configs.output_attention
+        self.metrics = MeanAbsoluteError()
 
-        Attention = ProbSparseAttention if attention_type == "prob" else FullAttention
+        # Embedding
+        if configs.embed_type == 0:
+            self.enc_embedding = DataEmbedding(configs.enc_in, configs.d_model, configs.embed, configs.freq,
+                                               configs.dropout)
+            self.dec_embedding = DataEmbedding(configs.dec_in, configs.d_model, configs.embed, configs.freq,
+                                               configs.dropout)
+        elif configs.embed_type == 1:
+            self.enc_embedding = DataEmbedding(configs.enc_in, configs.d_model, configs.embed, configs.freq,
+                                               configs.dropout)
+            self.dec_embedding = DataEmbedding(configs.dec_in, configs.d_model, configs.embed, configs.freq,
+                                               configs.dropout)
+        elif configs.embed_type == 2:
+            self.enc_embedding = DataEmbedding_wo_pos(configs.enc_in, configs.d_model, configs.embed, configs.freq,
+                                                      configs.dropout)
+            self.dec_embedding = DataEmbedding_wo_pos(configs.dec_in, configs.d_model, configs.embed, configs.freq,
+                                                      configs.dropout)
 
-        self.encoder = None
-
-        self.decoder = Decoder(
-            [
-                DecoderLayer(
-                    AttentionLayer(
-                        Attention(True, factor, attention_dropout=dropout, output_attention=False),
-                        d_model,
-                        n_heads,
-                        mix=mix_attention,
-                    ),
-                    AttentionLayer(
-                        FullAttention(False, factor, attention_dropout=dropout, output_attention=False),
-                        d_model,
-                        n_heads,
-                        mix=False,
-                    ),
-                    d_model,
-                    d_ff,
-                    dropout=dropout,
-                    activation=activation,
-                )
-                for _ in range(num_decoder_layers)
-            ],
-            nn.LayerNorm(d_model),
-        )
-
-        self.projection = nn.Linear(d_model, c_out)
-
-    def forward(
-        self,
-        x_enc,
-        x_enc_mark,
-        x_dec,
-        x_dec_mark,
-        enc_self_mask=None,
-        dec_self_mask=None,
-        dec_enc_mask=None
-    ):
-        enc_out = self.enc_embedding(x_enc, x_enc_mark)
-        enc_out, attentions = self.encoder(enc_out, attention_mask=enc_self_mask)
-
-        dec_out = self.dec_embedding(x_dec, x_dec_mark)
-        dec_out = self.decoder(dec_out, enc_out, x_mask=dec_self_mask, cross_mask=dec_enc_mask)
-        dec_out = self.projection(dec_out)
-
-        if self.output_attention:
-            return dec_out[:, -self.pred_len :, :], attentions
-        return dec_out[:, -self.pred_len :, :]
-
-
-class Informer(BaseInformer):
-    def __init__(
-        self,
-        enc_in=7,
-        dec_in=7,
-        c_out=7,
-        out_len=24,
-        factor=5,
-        d_model=512,
-        n_heads=8,
-        num_encoder_layers=2,
-        num_decoder_layers=1,
-        d_ff=2048,
-        dropout=0.05,
-        attention_type="prob",
-        embedding_type="fixed",
-        frequency="h",
-        activation="gelu",
-        output_attention=False,
-        distil=True,
-        mix_attention=False,
-        **kwargs
-    ):
-        super(Informer, self).__init__(
-            enc_in,
-            dec_in,
-            c_out,
-            out_len,
-            factor=factor,
-            d_model=d_model,
-            n_heads=n_heads,
-            num_encoder_layers=num_encoder_layers,
-            num_decoder_layers=num_decoder_layers,
-            d_ff=d_ff,
-            dropout=dropout,
-            attention_type=attention_type,
-            embedding_type=embedding_type,
-            frequency=frequency,
-            activation=activation,
-            output_attention=output_attention,
-            distil=distil,
-            mix_attention=mix_attention,
-        )
-        Attention = ProbSparseAttention if attention_type == "prob" else FullAttention
+        elif configs.embed_type == 3:
+            self.enc_embedding = DataEmbedding_wo_temp(configs.enc_in, configs.d_model, configs.embed, configs.freq,
+                                                       configs.dropout)
+            self.dec_embedding = DataEmbedding_wo_temp(configs.dec_in, configs.d_model, configs.embed, configs.freq,
+                                                       configs.dropout)
+        elif configs.embed_type == 4:
+            self.enc_embedding = DataEmbedding_wo_pos_temp(configs.enc_in, configs.d_model, configs.embed, configs.freq,
+                                                           configs.dropout)
+            self.dec_embedding = DataEmbedding_wo_pos_temp(configs.dec_in, configs.d_model, configs.embed, configs.freq,
+                                                           configs.dropout)
+        # Encoder
         self.encoder = Encoder(
             [
                 EncoderLayer(
                     AttentionLayer(
-                        Attention(False, factor, attention_dropout=dropout, output_attention=output_attention),
-                        d_model,
-                        n_heads,
-                        mix=False,
-                    ),
-                    d_model,
-                    d_ff,
-                    dropout=dropout,
-                    activation=activation,
-                )
-                for _ in range(num_encoder_layers)
+                        ProbAttention(False, configs.factor, attention_dropout=configs.dropout,
+                                      output_attention=configs.output_attention),
+                        configs.d_model, configs.n_heads),
+                    configs.d_model,
+                    configs.d_ff,
+                    dropout=configs.dropout,
+                    activation=configs.activation
+                ) for l in range(configs.e_layers)
             ],
-            [SelfAttentionDistil(d_model) for _ in range(num_encoder_layers - 1)] if distil else None,
-            nn.LayerNorm(d_model),
+            [
+                ConvLayer(
+                    configs.d_model
+                ) for l in range(configs.e_layers - 1)
+            ] if configs.distil else None,
+            norm_layer=torch.nn.LayerNorm(configs.d_model)
+        )
+        # Decoder
+        self.decoder = Decoder(
+            [
+                DecoderLayer(
+                    AttentionLayer(
+                        ProbAttention(True, configs.factor, attention_dropout=configs.dropout, output_attention=False),
+                        configs.d_model, configs.n_heads),
+                    AttentionLayer(
+                        ProbAttention(False, configs.factor, attention_dropout=configs.dropout, output_attention=False),
+                        configs.d_model, configs.n_heads),
+                    configs.d_model,
+                    configs.d_ff,
+                    dropout=configs.dropout,
+                    activation=configs.activation,
+                )
+                for l in range(configs.d_layers)
+            ],
+            norm_layer=torch.nn.LayerNorm(configs.d_model),
+            projection=nn.Linear(configs.d_model, configs.c_out, bias=True)
         )
 
+    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec,
+                enc_self_mask=None, dec_self_mask=None, dec_enc_mask=None):
 
-class InformerStack(BaseInformer):
-    def __init__(
-        self,
-        enc_in=7,
-        dec_in=7,
-        c_out=7,
-        out_len=24,
-        factor=5,
-        d_model=512,
-        n_heads=8,
-        num_encoder_layers=2,
-        num_decoder_layers=1,
-        d_ff=2048,
-        dropout=0.05,
-        attention_type="prob",
-        embedding_type="fixed",
-        frequency="h",
-        activation="gelu",
-        output_attention=False,
-        distil=True,
-        mix_attention=False,
-        **kwargs
-    ):
-        super(InformerStack, self).__init__(
-            enc_in,
-            dec_in,
-            c_out,
-            out_len,
-            factor=factor,
-            d_model=d_model,
-            n_heads=n_heads,
-            num_encoder_layers=num_encoder_layers,
-            num_decoder_layers=num_decoder_layers,
-            d_ff=d_ff,
-            dropout=dropout,
-            attention_type=attention_type,
-            embedding_type=embedding_type,
-            frequency=frequency,
-            activation=activation,
-            output_attention=output_attention,
-            distil=distil,
-            mix_attention=mix_attention
-        )
-        Attention = ProbSparseAttention if attention_type == "prob" else FullAttention
-        stacks = list(range(num_encoder_layers, 2, -1))  # customize here
-        encoders = [
-            Encoder(
-                [
-                    EncoderLayer(
-                        AttentionLayer(
-                            Attention(False, factor, attention_dropout=dropout, output_attention=output_attention),
-                            d_model,
-                            n_heads,
-                            mix=False,
-                        ),
-                        d_model,
-                        d_ff,
-                        dropout=dropout,
-                        activation=activation,
-                    )
-                    for _ in range(el)
-                ],
-                [SelfAttentionDistil(d_model) for _ in range(el - 1)] if distil else None,
-                nn.LayerNorm(d_model),
-            )
-            for el in stacks
-        ]
-        self.encoder = EncoderStack(encoders)
+        enc_out = self.enc_embedding(x_enc, x_mark_enc)
+        enc_out, attns = self.encoder(enc_out, attn_mask=enc_self_mask)
+
+        dec_out = self.dec_embedding(x_dec, x_mark_dec)
+        dec_out = self.decoder(dec_out, enc_out, x_mask=dec_self_mask, cross_mask=dec_enc_mask)
+
+        if self.output_attention:
+            return dec_out[:, -self.pred_len:, :], attns
+        else:
+            return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+
+    def training_step(self, batch, batch_idx):
+        x_enc, x_mark_enc, x_dec, x_mark_dec, y = batch
+        y_hat = self(x_enc, x_mark_enc, x_dec, x_mark_dec)
+        loss = nn.MSELoss()(y_hat, y)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        mae_metrics = self.metrics(y_hat, y)
+        self.log('train_mae', mae_metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x_enc, x_mark_enc, x_dec, x_mark_dec, y = batch
+        y_hat = self(x_enc, x_mark_enc, x_dec, x_mark_dec)
+        loss = nn.MSELoss()(y_hat, y)
+        self.log('validation_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        mae_metrics = self.metrics(y_hat, y)
+        self.log('validation_mae', mae_metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        x_enc, x_mark_enc, x_dec, x_mark_dec, y = batch
+        y_hat = self(x_enc, x_mark_enc, x_dec, x_mark_dec)
+        loss = nn.MSELoss()(y_hat, y)
+        self.log('test_loss', loss)
+        mae_metrics = self.metrics(y_hat, y)
+        self.log('test_mae', mae_metrics)
+        return loss

@@ -1,10 +1,13 @@
 import torch
 import torch.nn as nn
-from torchts.nn.layers.embedding import DataEmbedding, DataEmbedding_wo_pos, DataEmbedding_wo_pos_temp, DataEmbedding_wo_temp
+
 from torchts.nn.layers.AutoCorrelation import AutoCorrelation, AutoCorrelationLayer
-from torchts.nn.layers.Autoformer_EncDec import Encoder, Decoder, EncoderLayer, DecoderLayer, my_Layernorm, series_decomp
-import math
-import numpy as np
+from torchts.nn.layers.Autoformer_EncDec import Encoder, Decoder, EncoderLayer, DecoderLayer, my_Layernorm, \
+    series_decomp
+from torchts.nn.layers.Embed import DataEmbedding, DataEmbedding_wo_pos, DataEmbedding_wo_pos_temp, \
+    DataEmbedding_wo_temp
+from torchts.nn.model import TimeSeriesModel
+from torchmetrics import MeanAbsoluteError
 
 
 class Model(nn.Module):
@@ -13,12 +16,13 @@ class Model(nn.Module):
     with inherent O(LlogL) complexity
     """
 
-    def __init__(self, ):
+    def __init__(self, configs):
         super(Model, self).__init__()
         self.seq_len = configs.seq_len
         self.label_len = configs.label_len
         self.pred_len = configs.pred_len
         self.output_attention = configs.output_attention
+        self.metrics = MeanAbsoluteError()
 
         # Decomp
         kernel_size = configs.moving_avg
@@ -119,3 +123,31 @@ class Model(nn.Module):
             return dec_out[:, -self.pred_len:, :], attns
         else:
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+
+    def training_step(self, batch, batch_idx):
+        x_enc, x_mark_enc, x_dec, x_mark_dec, y = batch
+        y_hat = self(x_enc, x_mark_enc, x_dec, x_mark_dec)
+        loss = nn.MSELoss()(y_hat, y)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        mae_metrics = self.metrics(y_hat, y)
+        self.log('train_mae', mae_metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x_enc, x_mark_enc, x_dec, x_mark_dec, y = batch
+        y_hat = self(x_enc, x_mark_enc, x_dec, x_mark_dec)
+        loss = nn.MSELoss()(y_hat, y)
+        self.log('validation_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        mae_metrics = self.metrics(y_hat, y)
+        self.log('validation_mae', mae_metrics, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        x_enc, x_mark_enc, x_dec, x_mark_dec, y = batch
+        y_hat = self(x_enc, x_mark_enc, x_dec, x_mark_dec)
+        loss = nn.MSELoss()(y_hat, y)
+        self.log('test_loss', loss)
+        mae_metrics = self.metrics(y_hat, y)
+        self.log('test_mae', mae_metrics)
+        return loss
+
